@@ -107,6 +107,9 @@ describe('工具循环护栏（不设很低的轮次上限）', () => {
 
   it('总时长预算生效：超预算后不再调工具，直接兜底作答', async () => {
     const calls: Record<string, unknown>[] = []
+    // 预算判定只以注入的 now() 为准，不依赖真实时间/机器负载（并行跑也不会抖）。
+    // 时序：轮次 1 进入时 now()=0 < 预算 → 带工具；该轮流式调用“花掉”时间后 now()=10 → 轮次 2 超预算。
+    let clock = 0
     let index = 0
     const llm: LlmService = {
       stream(request: Record<string, unknown>) {
@@ -114,8 +117,8 @@ describe('工具循环护栏（不设很低的轮次上限）', () => {
         const hasTools = Array.isArray(request.tools) && request.tools.length > 0
         index += 1
         const callIndex = index
+        clock = 10
         async function* chunks() {
-          await new Promise((resolve) => setTimeout(resolve, 3))
           if (!hasTools) {
             yield { type: 'text-delta', text: '兜底回答' }
             yield { type: 'finish', reason: { kind: 'stop' } }
@@ -131,11 +134,13 @@ describe('工具循环护栏（不设很低的轮次上限）', () => {
       ...base,
       llm,
       timeBudgetMs: 1,
+      now: () => clock,
       onTool: async () => 'ok',
     })
     expect(text).toBe('兜底回答')
-    // 第 1 轮就超预算 → 第 2 轮（无工具）直接作答
+    // 第 1 轮正常给工具 → 第 2 轮（超预算、无工具）直接作答
     expect(calls).toHaveLength(2)
+    expect(calls[0].tools).toBeDefined()
     expect(calls[1].tools).toBeUndefined()
   })
 

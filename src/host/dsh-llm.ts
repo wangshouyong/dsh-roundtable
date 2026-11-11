@@ -310,6 +310,8 @@ export async function completeDshChat(input: {
   maxToolCalls?: number
   /** 总时长预算（默认 240s，仅防挂死）；可用 DSH_IM_TURN_BUDGET_MS 调。 */
   timeBudgetMs?: number
+  /** 注入时钟（默认 `Date.now`）。仅测试用来消除“预算按真实时间判定”的不确定性；生产不传。 */
+  now?: () => number
   /** 每一步执行的回调（回执/成员行为时间线用；只传截断预览）。 */
   onStep?: (step: TurnStepTrace) => void
   /** 工具循环统计回调（host 写 trace/metrics：toolCalls / toolBudgetExhausted）。 */
@@ -331,7 +333,8 @@ export async function completeDshChat(input: {
   const envBudget = Number(process.env.DSH_IM_TURN_BUDGET_MS)
   const budgetMs = input.timeBudgetMs
     ?? (Number.isFinite(envBudget) && envBudget > 0 ? Math.floor(envBudget) : 240_000)
-  const startedAt = Date.now()
+  const now = input.now ?? Date.now
+  const startedAt = now()
   // 宿主 DSH 的 ToolSchema 形状就是 { name, description, parameters }。
   const tools = toolsForAllow(input.toolAllow)
   const history: unknown[] = []
@@ -363,7 +366,7 @@ export async function completeDshChat(input: {
   let forceAnswer = false
   for (let round = 0; ; round++) {
     toolStats.toolRounds = round + 1
-    const elapsed = Date.now() - startedAt
+    const elapsed = now() - startedAt
     const lastChance = forceAnswer || round >= ceiling || elapsed >= budgetMs
     const remaining = Math.max(15_000, budgetMs - elapsed)
     const signal = AbortSignal.timeout(Math.min(120_000, remaining))
