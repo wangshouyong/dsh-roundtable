@@ -48,7 +48,9 @@
 
 ## 安装
 
-### 方式一：从源码接入（最稳，推荐）
+> 普通用户直接用 **方式四（npm，一条命令）**；想改代码/排查问题用 **方式一（源码）**。
+
+### 方式一：从源码接入（最稳；开发与排查用）
 
 ```sh
 git clone https://github.com/wangshouyong/dsh-roundtable.git
@@ -95,17 +97,15 @@ allowBuilds:
 
 这条 key 里的 commit 哈希要跟报错里的一致（换版本会变）。如果你不想碰 pnpm 配置，用方式一或方式二。
 
-### 方式四：从 npm 安装
+### 方式四：从 npm 安装（最省事，普通用户推荐）
 
 ```sh
 dsh plugin --profile desktop add @dabuliu_wsy/dsh-im
 ```
 
 npm 包名是 `@dabuliu_wsy/dsh-im`（scope 必填），插件 id 与数据目录仍是 `dsh-im`。
-发布前会跑 `npm run gate` + `npm run verify:pack`（产物齐全、无开发材料、manifest 与版本一致）。
-
-> 状态：**尚未发布到 npm**。包体已就绪（`npm pack` 校验通过），发布流程（2FA / token）还在走，
-> 发布后本节即刻可用。在此之前请用方式一 / 方式二 / 方式三。
+版本 **0.2.0** 已发布（[npm 页面](https://www.npmjs.com/package/@dabuliu_wsy/dsh-im)）；
+每次发布前会跑 `npm run gate` + `npm run verify:pack`（产物齐全、无开发材料、manifest 与版本一致）。
 
 ## 配置
 
