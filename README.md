@@ -3,7 +3,7 @@
 > DSH（DeepSeek Harness）插件：把多个角色拉进同一个群或私聊，让它们各自带着人设、岗位和工具协作。
 > 模型与调用全部走宿主 `ctx.llm`（或原生 session），插件不直连任何网关、不保存任何密钥。
 
-`版本 0.2.0` · `Node ≥ 20` · `MIT` · **开发中**（数据格式与接口仍可能变化）
+`版本 0.2.0` · `Node ≥ 20` · `MIT` · **可用版本（0.x：接口与数据格式可能小幅调整）**
 
 > 名称说明：仓库与品牌名为 **dsh-roundtable**；npm 包名是带 scope 的 `@dabuliu_wsy/dsh-im`，**插件 id 与数据目录仍是 `dsh-im`**（`.dsh-im/`、`DSH_IM_*` 环境变量），以兼容现有数据和已装配置。
 
@@ -171,7 +171,8 @@ scripts/      构建与校验脚本
 
 ## 项目状态与已知限制（如实）
 
-- `0.1.0`，**开发中**：数据格式、接口、UI 都可能变。
+- **当前版本 `v0.2.0`**（tag + [Release 附件](https://github.com/wangshouyong/dsh-roundtable/releases)）：核心功能完成，`npm run gate`（typecheck → 单测 → build → 打包内容校验）与 GitHub Actions 全绿。
+- **0.x 语义**：接口、数据格式与 UI 仍可能小幅调整；破坏性变更会写进 Release 说明，不静默改契约。
 - **原生 session 是默认路径，但仍是需要门禁守着的链路**：依赖宿主提供 `ctx.agents` + `tools.register` / `tools.guard`；缺能力时整体回退 `ctx.llm`。它不是"稳定 API"，宿主升级后可能要跟着改。
 - **实验特性默认 shadow**：按需检索、记忆层句柄注入、token 校准都先只观测（写进回执/样本），要显式开开关才改变行为。
 - **记忆层仍在推进**：索引、claim、可见性、句柄协议、search/expand 工具已落地，但注入默认关闭。
