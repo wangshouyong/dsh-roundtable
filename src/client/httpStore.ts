@@ -1,6 +1,7 @@
 import type { ModelOption } from '../host/models.ts'
 import type { ModelTransport } from '../core/runtime.ts'
 import type { ImState } from '../core/types.ts'
+import type { TrashEntryMeta, TrashKind, TrashPayload } from '../core/trash.ts'
 import type { FileSink } from '../core/workspace.ts'
 import { parseGrant, toolGroupCatalog, type ToolGroupCatalog } from '../core/tools.ts'
 import { logWarn } from '../core/log.ts'
@@ -346,4 +347,145 @@ export async function saveRemoteState(state: ImState, projectRoot?: string): Pro
   if (Array.isArray(data?.warnings) && data.warnings.length > 0) {
     logWarn('[dsh-im] 落盘有部分失败（聊天记录已保存）', data.warnings.join('；'))
   }
+}
+
+// ── 回收站（软删除） ─────────────────────────────────────────────────────────
+// 口径：删除先在客户端改内存并落盘 state，再把物理目录交给 host 移进
+// `<数据根>/.dsh-im/trash/`；恢复/彻底删除都是 host 侧动作，面板只拿清单与快照。
+
+async function responseError(action: string, res: Response): Promise<Error> {
+  const text = await res.text().catch(() => '')
+  let reason = ''
+  try {
+    const parsed = JSON.parse(text) as { error?: string }
+    reason = parsed.error?.trim() ?? ''
+  } catch {
+    reason = text.trim().slice(0, 300)
+  }
+  return new Error(`${action}失败（HTTP ${res.status}）${reason ? '：' + reason : ''}`)
+}
+
+/** 读回收站清单（deletedAt 倒序）。接口不存在时返回空（老宿主），不挡面板。 */
+export async function loadTrash(projectRoot?: string): Promise<TrashEntryMeta[]> {
+  const res = await fetch('/api/im/trash' + stateQuery(projectRoot))
+  if (res.status === 404) return []
+  if (!res.ok) throw await responseError('读取回收站', res)
+  const data = (await res.json().catch(() => ({}))) as { entries?: TrashEntryMeta[] }
+  return Array.isArray(data.entries) ? data.entries : []
+}
+
+/** 把一个会话/角色/聊天记录移入回收站。 */
+export async function addTrashEntry(input: {
+  projectRoot?: string
+  kind: TrashKind
+  label?: string
+  detail?: string
+  threadIds?: string[]
+  payload: TrashPayload
+  replaceOnRestore?: boolean
+}): Promise<TrashEntryMeta> {
+  const res = await fetch('/api/im/trash/add', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (res.status === 404) throw new Error('当前 DSH 宿主还没加载回收站接口：请重启 DSH 后再试')
+  if (!res.ok) throw await responseError('移入回收站', res)
+  const data = (await res.json().catch(() => ({}))) as { entry?: TrashEntryMeta }
+  if (!data.entry) throw new Error('移入回收站失败：宿主没有返回回收站记录')
+  return data.entry
+}
+
+/** 恢复一条回收站记录：host 把数据目录搬回原位置，并返回状态快照。 */
+export async function restoreTrashEntry(
+  id: string,
+  projectRoot?: string,
+): Promise<{ meta: TrashEntryMeta; payload: TrashPayload }> {
+  const res = await fetch('/api/im/trash/restore', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectRoot, id }),
+  })
+  if (!res.ok) throw await responseError('恢复回收站记录', res)
+  return (await res.json()) as { meta: TrashEntryMeta; payload: TrashPayload }
+}
+
+/** 彻底删除一条回收站记录；不传 id 清空回收站。 */
+export async function purgeTrash(
+  id?: string,
+  projectRoot?: string,
+): Promise<{ purged: number; failed: string[] }> {
+  const res = await fetch('/api/im/trash/purge', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectRoot, ...(id ? { id } : {}) }),
+  })
+  if (!res.ok) throw await responseError('彻底删除回收站记录', res)
+  return (await res.json()) as { purged: number; failed: string[] }
+}
+
+/** 删除/清空后释放对应的原生会话（否则被删历史还留在宿主 agent 内存里）。 */
+export async function forgetNativeSessions(filter: {
+  personaId?: string
+  threadId?: string
+}): Promise<{ disposed: number }> {
+  const res = await fetch('/api/im/native-forget', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(filter),
+  })
+  if (!res.ok) throw await responseError('释放原生会话', res)
+  return (await res.json()) as { disposed: number }
+}
+
+// ── 群工作区文件（只读） ─────────────────────────────────────────────────────
+// 群数据与产物同目录（`.dsh-im/groups/<threadId>/`）：角色写文件、汇总、附件都在这。
+
+export interface GroupFileEntry {
+  name: string
+  /** 相对群工作区的路径（'/' 分隔）。 */
+  path: string
+  kind: 'file' | 'dir'
+  bytes?: number
+  modifiedAt?: number
+  mediaType?: string
+}
+
+export interface GroupFileListing {
+  path: string
+  parent: string
+  entries: GroupFileEntry[]
+  /** 群目录还不存在（空会话）时 false，面板显示空态而不是报错。 */
+  exists: boolean
+  truncated?: boolean
+}
+
+function groupFileQuery(threadId: string, path?: string, projectRoot?: string): string {
+  const params = new URLSearchParams({ threadId })
+  if (path) params.set('path', path)
+  // 和 stateQuery 同一口径：只有绝对路径才发给宿主（相对路径交给宿主默认工作区）。
+  if (projectRoot && (/^[A-Za-z]:[\\/]/.test(projectRoot) || projectRoot.startsWith('/'))) {
+    params.set('projectRoot', projectRoot)
+  }
+  return params.toString()
+}
+
+/** 列群工作区目录（文件/产物）。 */
+export async function loadGroupFiles(threadId: string, path: string, projectRoot?: string): Promise<GroupFileListing> {
+  const res = await fetch('/api/im/group-files?' + groupFileQuery(threadId, path, projectRoot))
+  if (res.status === 404) throw new Error('当前 DSH 宿主还没加载群文件接口：请重启 DSH 后再试')
+  if (!res.ok) throw await responseError('读取群文件列表', res)
+  return (await res.json()) as GroupFileListing
+}
+
+/** 群文件的原始地址（图片 <img>、下载链接、文本 fetch 共用）。 */
+export function groupFileUrl(threadId: string, path: string, projectRoot?: string): string {
+  return '/api/im/group-file?' + groupFileQuery(threadId, path, projectRoot)
+}
+
+/** 读文本文件内容（面板内预览用；宿主已限制单文件 50MB）。 */
+export async function loadGroupFileText(threadId: string, path: string, projectRoot?: string): Promise<string> {
+  const res = await fetch(groupFileUrl(threadId, path, projectRoot))
+  if (!res.ok) throw await responseError('读取文件', res)
+  return await res.text()
 }

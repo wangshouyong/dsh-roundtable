@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { apply } from '../src/host/index.ts'
 
@@ -44,7 +47,7 @@ function fakeTools() {
   }
 }
 
-function setupCtx(options: { agents?: boolean; forceOff?: boolean }) {
+function setupCtx(options: { agents?: boolean; forceOff?: boolean; root?: string }) {
   const routes: MountedRoute[] = []
   let dispose: (() => void) | undefined
   let archiveCalls = 0
@@ -56,6 +59,7 @@ function setupCtx(options: { agents?: boolean; forceOff?: boolean }) {
       fn({
         workspaceRegistry: {
           archiveSession: async () => { archiveCalls += 1 },
+          list: () => (options.root ? [{ path: options.root }] : []),
         },
         webServer: {
           register(row: MountedRoute) {
@@ -81,11 +85,22 @@ function setupCtx(options: { agents?: boolean; forceOff?: boolean }) {
 }
 
 function fakeResponse() {
-  const out = { status: 0, body: '' }
+  const out = { status: 0, body: '', headers: {} as Record<string, string>, bytes: undefined as Uint8Array | undefined }
   return {
     set statusCode(value: number) { out.status = value },
-    setHeader() {},
-    end(body: string) { out.body = body },
+    setHeader(name: string, value: unknown) { out.headers[name.toLowerCase()] = String(value) },
+    writeHead(status: number, headers: Record<string, unknown>) {
+      out.status = status
+      for (const [name, value] of Object.entries(headers)) out.headers[name.toLowerCase()] = String(value)
+    },
+    end(body: string | Uint8Array) {
+      if (typeof body === 'string') {
+        out.body = body
+      } else {
+        out.bytes = body
+        out.body = Buffer.from(body).toString('utf8')
+      }
+    },
     read: () => out,
   }
 }
@@ -95,6 +110,43 @@ async function get(routes: MountedRoute[], url: string) {
   const res = fakeResponse()
   await route.handler({ url, method: 'GET', headers: { host: 'localhost' } }, res)
   return { status: res.read().status, body: JSON.parse(res.read().body) }
+}
+
+/** 假请求：readBody 依赖 data/end 事件；这里用微任务在同一 tick 内回放。 */
+function fakeRequest(input: { url: string; method: string; body?: string; headers?: Record<string, string> }) {
+  const listeners: Record<string, ((chunk?: unknown) => void)[]> = {}
+  const req = {
+    url: input.url,
+    method: input.method,
+    headers: { host: 'localhost', ...(input.headers ?? {}) },
+    on(event: string, handler: (chunk?: unknown) => void) {
+      ;(listeners[event] ??= []).push(handler)
+      if (event === 'end') {
+        queueMicrotask(() => {
+          if (input.body !== undefined) for (const item of listeners.data ?? []) item(Buffer.from(input.body))
+          for (const item of listeners.end ?? []) item()
+        })
+      }
+      return req
+    },
+    destroy() {},
+  }
+  return req
+}
+
+async function call(routes: MountedRoute[], input: { url: string; method: string; body?: string }) {
+  const res = fakeResponse()
+  await routes[0].handler(fakeRequest(input), res)
+  const text = res.read().body
+  return { status: res.read().status, body: text ? JSON.parse(text) : null }
+}
+
+/** 原始字节路由（/group-file）：不 JSON.parse，返回 header 与文本。 */
+async function callRaw(routes: MountedRoute[], input: { url: string; method: string }) {
+  const res = fakeResponse()
+  await routes[0].handler(fakeRequest(input), res)
+  const out = res.read()
+  return { status: out.status, headers: out.headers, body: out.body, bytes: out.bytes }
 }
 
 describe('host 挂载（/api/im 路由 + 原生 session 开关）', () => {
@@ -150,5 +202,106 @@ describe('host 挂载（/api/im 路由 + 原生 session 开关）', () => {
     for (const key of ['registered', 'hasState', 'personas', 'threads', 'messages']) {
       expect(current).toHaveProperty(key)
     }
+  })
+
+  it('回收站路由：GET 清单 / POST add→restore→purge / native-forget 参数校验', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshim-trash-route-'))
+    await mkdir(join(root, '.dsh-im', 'groups', 't1'), { recursive: true })
+    await writeFile(join(root, '.dsh-im', 'groups', 't1', 'events.jsonl'), '{"seq":1}\n')
+    const { routes } = setupCtx({ root })
+    const query = encodeURIComponent(root)
+
+    const empty = await call(routes, { url: `/api/im/trash?projectRoot=${query}`, method: 'GET' })
+    expect(empty.status).toBe(200)
+    expect(empty.body.entries).toEqual([])
+
+    const added = await call(routes, {
+      url: '/api/im/trash/add',
+      method: 'POST',
+      body: JSON.stringify({
+        projectRoot: root,
+        kind: 'thread',
+        label: '评审组',
+        detail: '群 · 1 条消息',
+        threadIds: ['t1'],
+        payload: { thread: { id: 't1', title: '评审组' } },
+      }),
+    })
+    expect(added.status).toBe(200)
+    expect(added.body.entry).toMatchObject({ kind: 'thread', label: '评审组', threadIds: ['t1'] })
+
+    const listed = await call(routes, { url: `/api/im/trash?projectRoot=${query}`, method: 'GET' })
+    expect(listed.body.entries).toHaveLength(1)
+
+    const restored = await call(routes, {
+      url: '/api/im/trash/restore',
+      method: 'POST',
+      body: JSON.stringify({ projectRoot: root, id: added.body.entry.id }),
+    })
+    expect(restored.status).toBe(200)
+    expect(restored.body.payload.thread.id).toBe('t1')
+
+    const purged = await call(routes, {
+      url: '/api/im/trash/purge',
+      method: 'POST',
+      body: JSON.stringify({ projectRoot: root }),
+    })
+    expect(purged.status).toBe(200)
+    expect(purged.body).toEqual({ purged: 0, failed: [] })
+
+    const rejected = await call(routes, {
+      url: '/api/im/native-forget',
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    expect(rejected.status).toBe(400)
+
+    const withAgents = setupCtx({ root, agents: true })
+    const forgotten = await call(withAgents.routes, {
+      url: '/api/im/native-forget',
+      method: 'POST',
+      body: JSON.stringify({ threadId: 't1' }),
+    })
+    expect(forgotten.status).toBe(200)
+    expect(forgotten.body).toEqual({ disposed: 0 })
+    delete process.env.DSH_IM_NATIVE_SESSION
+  })
+
+  it('群文件路由：列目录（隐藏内部账本）/ 读原文 / 路径围栏 400', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dshim-files-route-'))
+    const dir = join(root, '.dsh-im', 'groups', 't1')
+    await mkdir(join(dir, '交付稿'), { recursive: true })
+    await writeFile(join(dir, 'events.jsonl'), '{"seq":1}\n')
+    await writeFile(join(dir, '本轮汇总.md'), '# 汇总\n结论：通过', 'utf8')
+    await writeFile(join(dir, '交付稿', '说明.md'), '说明正文', 'utf8')
+    const { routes } = setupCtx({ root })
+    const query = encodeURIComponent(root)
+
+    const listed = await call(routes, {
+      url: `/api/im/group-files?threadId=t1&projectRoot=${query}`,
+      method: 'GET',
+    })
+    expect(listed.status).toBe(200)
+    expect(listed.body.entries.map((entry: { name: string }) => entry.name)).toEqual(['交付稿', '本轮汇总.md'])
+
+    const raw = await callRaw(routes, {
+      url: `/api/im/group-file?threadId=t1&projectRoot=${query}&path=${encodeURIComponent('本轮汇总.md')}`,
+      method: 'GET',
+    })
+    expect(raw.status).toBe(200)
+    expect(raw.headers['content-type']).toBe('text/plain')
+    expect(raw.body).toContain('结论：通过')
+
+    const traversal = await call(routes, {
+      url: `/api/im/group-files?threadId=t1&projectRoot=${query}&path=${encodeURIComponent('../state.json')}`,
+      method: 'GET',
+    })
+    expect(traversal.status).toBe(400)
+
+    const internal = await call(routes, {
+      url: `/api/im/group-files?threadId=t1&projectRoot=${query}&path=${encodeURIComponent('../.dsh-im/state.json')}`,
+      method: 'GET',
+    })
+    expect(internal.status).toBe(400)
   })
 })

@@ -8,6 +8,7 @@ import { stripLegacyReasoning } from '../../core/text.ts'
 import { activityLabel } from '../../core/floor.ts'
 import { Avatar } from '../Avatar.tsx'
 import { IconChevronRight, IconCrown, IconMore, IconSearch } from './icons.tsx'
+import { GroupFilesPane } from './group-files.tsx'
 import { ACTIVITIES, fmt, jumpToSourceMessage, memberChips } from './shared.tsx'
 
 /** 徽标颜色：状态 → 点。candidate 灰、进行/有效绿、失败红、派生蓝。 */
@@ -426,7 +427,7 @@ export function MemberPane(props: {
   )
 }
 
-export type GroupRightTab = 'members' | 'facts' | 'queue' | 'activity'
+export type GroupRightTab = 'members' | 'facts' | 'queue' | 'activity' | 'files'
 
 export const TOOL_TRACE_LABEL: Record<string, string> = {
   list_dir: '列目录',
@@ -510,6 +511,7 @@ export function GroupRightPane(props: {
         <button type="button" className={tab === 'facts' ? 'on' : ''} onClick={() => onTab('facts')}>任务板</button>
         <button type="button" className={tab === 'queue' ? 'on' : ''} onClick={() => onTab('queue')}>候选</button>
         <button type="button" className={tab === 'activity' ? 'on' : ''} onClick={() => onTab('activity')}>执行</button>
+        <button type="button" className={tab === 'files' ? 'on' : ''} onClick={() => onTab('files')}>文件</button>
       </div>
       <div className="right-body">
         {tab === 'members'
@@ -526,15 +528,17 @@ export function GroupRightPane(props: {
             ? <FactsBoard im={im} thread={thread} run={run} />
             : tab === 'queue'
               ? <RoundPlan im={im} thread={thread} />
-              : (
-                <ActivityPane
-                  im={im}
-                  thread={thread}
-                  filter={activityFilter}
-                  onFilter={onActivityFilter}
-                  onOpenTrace={onOpenTrace}
-                />
-              )}
+              : tab === 'files'
+                ? <GroupFilesPane thread={thread} projectRoot={thread.projectRoot} />
+                : (
+                  <ActivityPane
+                    im={im}
+                    thread={thread}
+                    filter={activityFilter}
+                    onFilter={onActivityFilter}
+                    onOpenTrace={onOpenTrace}
+                  />
+                )}
       </div>
     </aside>
   )

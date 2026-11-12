@@ -48,16 +48,21 @@ type DshCtx = {
 
 const MAX_BODY = 2 * 1024 * 1024
 const MAX_UPLOAD_BODY = 25 * 1024 * 1024
+/**
+ * 回收站写入要带一份完整会话快照（消息 + 附件元数据），比普通 state 上限放宽。
+ * 仍是同源本地请求；上限存在的意义是挡住异常大包，不是权限边界。
+ */
+const MAX_TRASH_BODY = 8 * 1024 * 1024
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBodyLimited(req: IncomingMessage, limit: number, tooLarge: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
     req.on('data', (c) => {
       const chunk = Buffer.isBuffer(c) ? c : Buffer.from(c)
       size += chunk.length
-      if (size > MAX_BODY) {
-        reject(Object.assign(new Error('request body too large'), { status: 413 }))
+      if (size > limit) {
+        reject(Object.assign(new Error(tooLarge), { status: 413 }))
         req.destroy()
         return
       }
@@ -66,6 +71,14 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return readBodyLimited(req, MAX_BODY, 'request body too large')
+}
+
+function readTrashBody(req: IncomingMessage): Promise<string> {
+  return readBodyLimited(req, MAX_TRASH_BODY, '回收站快照太大')
 }
 
 /** 附件上传专用：原始字节，上限 25MB。 */
@@ -247,6 +260,51 @@ function mountImRoutes(
       }
       if (path.endsWith('/models') && req.method === 'GET') {
         send(res, 200, await api.models())
+        return
+      }
+      // ── 回收站（软删除） ────────────────────────────────────────────────
+      if (path.endsWith('/trash') && req.method === 'GET') {
+        send(res, 200, await api.trashList(url.searchParams.get('projectRoot') ?? undefined))
+        return
+      }
+      if (path.endsWith('/trash/add') && req.method === 'POST') {
+        send(res, 200, await api.trashAdd(JSON.parse(await readTrashBody(req))))
+        return
+      }
+      if (path.endsWith('/trash/restore') && req.method === 'POST') {
+        send(res, 200, await api.trashRestore(JSON.parse(await readBody(req))))
+        return
+      }
+      if (path.endsWith('/trash/purge') && req.method === 'POST') {
+        send(res, 200, await api.trashPurge(JSON.parse(await readBody(req))))
+        return
+      }
+      // 删除/清空后释放对应的原生会话（被删历史不能继续留在宿主内存里）。
+      if (path.endsWith('/native-forget') && req.method === 'POST') {
+        send(res, 200, await api.nativeForget(JSON.parse(await readBody(req))))
+        return
+      }
+      // 群工作区文件（只读）：列表 + 原始文件字节（面板「文件」Tab 用）。
+      if (path.endsWith('/group-files') && req.method === 'GET') {
+        send(res, 200, await api.groupFiles({
+          threadId: url.searchParams.get('threadId') ?? undefined,
+          projectRoot: url.searchParams.get('projectRoot') ?? undefined,
+          path: url.searchParams.get('path') ?? undefined,
+        }))
+        return
+      }
+      if (path.endsWith('/group-file') && req.method === 'GET') {
+        const file = await api.groupFile({
+          threadId: url.searchParams.get('threadId') ?? undefined,
+          projectRoot: url.searchParams.get('projectRoot') ?? undefined,
+          path: url.searchParams.get('path') ?? undefined,
+        })
+        res.writeHead(200, {
+          'content-type': file.mediaType,
+          'content-length': String(file.bytes.byteLength),
+          'cache-control': 'no-store',
+        })
+        res.end(file.bytes)
         return
       }
       // 数据根体检（只读）：面板据此在加载失败时列出「哪个根里还有数据」。

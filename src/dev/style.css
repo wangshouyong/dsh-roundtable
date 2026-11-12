@@ -3282,3 +3282,536 @@ body {
     white-space: normal;
   }
 }
+
+/* ㉑ 删除 / 回收站（软删除） ------------------------------------------------ */
+/* 会话行「…」：悬停时替换时间，点击出菜单（清空聊天记录 / 删除会话） */
+.row .row-more {
+  display: none;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  margin-left: 2px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-xs);
+}
+.row:hover .row-more,
+.row.on .row-more,
+.row:focus-within .row-more {
+  display: inline-flex;
+}
+.row:hover .time,
+.row.on .time,
+.row:focus-within .time {
+  display: none;
+}
+.row .row-more:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.row-menu {
+  position: absolute;
+  right: 8px;
+  top: calc(100% - 6px);
+  z-index: 8;
+  min-width: 140px;
+}
+.menu button.danger {
+  color: var(--danger);
+}
+.menu button.danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+/* 顶栏「…」会话菜单 */
+.head-more-wrap {
+  position: relative;
+  display: flex;
+}
+.head-actions button.head-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+}
+.head-menu {
+  top: calc(100% + 6px);
+  right: 0;
+}
+/* 左栏底部「回收站」入口 */
+.trash-entry {
+  flex: none;
+  margin: 2px 12px 10px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-12);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.trash-entry:hover {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+/* 角色资料「删除角色」 */
+.row-btn.danger {
+  color: var(--danger);
+}
+.row-btn.danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+/* 二次确认弹窗 */
+.confirm-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+.confirm-body {
+  padding: 0 20px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  line-height: 1.7;
+}
+.confirm-body p {
+  margin: 0;
+}
+.confirm-body ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px 18px;
+}
+.confirm-actions button {
+  height: var(--ctrl-h);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  border-radius: var(--r-md);
+  padding: 0 14px;
+  font: inherit;
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.confirm-actions button:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.confirm-actions button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.confirm-actions button.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: var(--on-accent);
+  filter: brightness(0.94);
+}
+.confirm-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 回收站弹窗 */
+.trash-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(80vh, 680px);
+}
+.trash-summary {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px 10px;
+  color: var(--muted);
+  font-size: var(--fs-11);
+}
+.trash-summary .spacer {
+  flex: 1;
+}
+.text-link.danger {
+  color: var(--danger);
+}
+.trash-list {
+  flex: 1 1 auto;
+  min-height: 80px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 20px 14px;
+}
+.trash-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.trash-kind {
+  flex: none;
+  font-size: var(--fs-10);
+  line-height: 18px;
+  padding: 0 7px;
+  border-radius: var(--r-xs);
+  background: var(--surface-3);
+  color: var(--muted);
+}
+.trash-kind.history {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.trash-kind.persona {
+  background: var(--blue-soft);
+  color: var(--blue-ink);
+}
+.trash-main {
+  flex: 1;
+  min-width: 0;
+}
+.trash-label {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trash-meta {
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: var(--fs-11);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trash-actions {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+.trash-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  border-radius: var(--r-sm);
+  padding: 0 9px;
+  font: inherit;
+  font-size: var(--fs-11);
+  cursor: pointer;
+}
+.trash-actions button:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.trash-actions button.danger {
+  color: var(--danger);
+}
+.trash-actions button.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+.trash-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.trash-foot {
+  flex: none;
+  padding: 0 20px 18px;
+  color: var(--faint);
+  font-size: var(--fs-10);
+  line-height: 1.6;
+}
+/* 轻提示（操作结果） */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: min(620px, calc(100vw - 40px));
+  padding: 9px 14px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  box-shadow: var(--sh-2);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  animation: pop-in 160ms var(--ease);
+}
+.toast.error {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+/* 窄窗：其它顶栏按钮会隐藏，会话菜单必须保留（否则没有删除入口） */
+@media (max-width: 820px) {
+  .head-actions button.head-more-btn {
+    display: inline-flex;
+  }
+}
+
+/* ㉒ 角色资料重开入口 + 群文件（2026-11-12） -------------------------------- */
+/* 标题头像 = 打开/切换角色资料（DM 关掉资料后从这里重开） */
+.head-avatar-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50% !important;
+  background: transparent;
+  cursor: pointer;
+  transition: box-shadow var(--dur) var(--ease);
+}
+.head-avatar-btn:hover {
+  box-shadow: var(--focus-ring);
+}
+.head-avatar-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+/* 消息头像 = 打开/切换角色资料 */
+.msg-avatar-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50% !important;
+  background: transparent;
+  cursor: pointer;
+  align-self: start;
+}
+.msg-avatar-btn:hover .avatar {
+  box-shadow: var(--focus-ring);
+}
+.msg-avatar-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 50% !important;
+}
+/* 群文件面板（右栏 Tab / 会话文件弹窗共用） */
+.group-files {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.files-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px 6px;
+}
+.files-head h3 {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+}
+.files-crumbs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 12px 8px;
+  border-bottom: 1px solid var(--line-faint);
+}
+.crumb-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--faint);
+}
+.crumb {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-11);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-xs);
+}
+.crumb:hover {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.crumb.on {
+  color: var(--text);
+  font-weight: 600;
+}
+.files-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.file-row:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.file-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--muted);
+}
+.file-row.dir .file-icon {
+  color: var(--blue);
+}
+.file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-meta {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-10);
+  font-variant-numeric: tabular-nums;
+}
+.file-chevron {
+  flex: none;
+  display: inline-flex;
+  color: var(--faint);
+}
+.files-hint {
+  padding: 8px 10px;
+  color: var(--faint);
+  font-size: var(--fs-11);
+  line-height: 1.6;
+}
+.files-error {
+  margin: 6px;
+  padding: 8px 10px;
+  color: var(--danger);
+  font-size: var(--fs-11);
+  background: var(--danger-soft);
+  border-radius: var(--r-sm);
+}
+.files-foot {
+  flex: none;
+  padding: 8px 12px 10px;
+  color: var(--faint);
+  font-size: var(--fs-10);
+  line-height: 1.5;
+  border-top: 1px solid var(--line-faint);
+}
+/* 会话文件弹窗（DM / 从菜单打开） */
+.files-dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(84vh, 760px);
+}
+.files-dialog .group-files {
+  min-height: 340px;
+  max-height: 62vh;
+}
+/* 文件预览弹窗 */
+.file-preview-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(84vh, 760px);
+}
+.file-preview-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.file-preview-title {
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-preview-body {
+  min-height: 0;
+  padding: 0 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+.file-text {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 52vh;
+  overflow: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: var(--fs-11);
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.file-image {
+  max-width: 100%;
+  max-height: 52vh;
+  object-fit: contain;
+  align-self: flex-start;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+/* 文件预览弹窗头部：标题可缩、动作不换行（标题长时「关闭」不能竖排） */
+.file-preview-head-actions {
+  flex: none;
+  white-space: nowrap;
+}
+.file-preview-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}

@@ -19,11 +19,12 @@ export function PersonaProfile(props: {
   onClose: () => void
   onEdit: () => void
   onMessage: () => void
+  onDelete: () => void
   refresh: () => void
   projectRoot: string
   models: ModelCatalog
 }) {
-  const { im, persona, thread, onClose, onEdit, onMessage, refresh, projectRoot, models } = props
+  const { im, persona, thread, onClose, onEdit, onMessage, onDelete, refresh, projectRoot, models } = props
   const workspaces = useWorkspaces()
   const [actOpen, setActOpen] = useState(false)
   const [invite, setInvite] = useState(false)
@@ -141,6 +142,7 @@ export function PersonaProfile(props: {
         <button type="button" className="row-btn" onClick={onMessage}><span>发消息</span><span><IconChevronRight size={12} /></span></button>
         <button type="button" className="row-btn" onClick={onEdit}><span>编辑角色</span><span><IconChevronRight size={12} /></span></button>
         <button type="button" className="row-btn" onClick={() => setInvite((v) => !v)}><span>拉入群 / 小窗</span><span><IconChevronRight size={12} /></span></button>
+        <button type="button" className="row-btn danger" onClick={onDelete}><span>删除角色</span><span><IconChevronRight size={12} /></span></button>
         {invite && (
           <div className="form">
             {picked.length !== 1 && (

@@ -60,6 +60,20 @@ import type {
   ThreadKind,
 } from './types.ts'
 import { type FileSink, memorySink, summaryRelPath } from './workspace.ts'
+import {
+  canRestoreHistory,
+  cloneJson,
+  sanitizeThreadSnapshot,
+  trashHistoryDetail,
+  trashPersonaDetail,
+  trashThreadDetail,
+  type ClearHistoryPlan,
+  type DeletePersonaPlan,
+  type DeleteThreadPlan,
+  type RestorePersonaResult,
+  type TrashPayload,
+  type TrashPersonaMembership,
+} from './trash.ts'
 
 const HOUR = 60 * 60 * 1000
 
@@ -647,6 +661,310 @@ export class ImService {
   setActivity(threadId: string, personaId: string, activity: Activity): void {
     const m = this.requireThread(threadId).members.find((x) => x.personaId === personaId)
     if (m) m.activity = activity
+  }
+
+  // ── 软删除 / 清空 / 恢复（回收站） ─────────────────────────────────────
+  //
+  // 这一层只改**内存状态**并返回快照计划；物理目录搬运由 host 的回收站负责
+  // （`src/host/trash-store.ts` + `/api/im/trash/*`）。调用方（面板）顺序：
+  //   1) 调这里的删除方法拿到计划；2) 立即落盘 state；3) 再调 host 把它移入回收站。
+  // 任何一步失败都要用对应 restore* 方法回滚内存状态，不能半删。
+
+  /** 删除会话 / 解散群：会话从 state 移除，返回回收站快照。 */
+  deleteThread(threadId: string): DeleteThreadPlan {
+    const thread = this.requireThread(threadId)
+    const snapshot = sanitizeThreadSnapshot(thread)
+    this.state.threads = this.state.threads.filter((item) => item.id !== threadId)
+    this.dropThreadReferences(threadId)
+    return {
+      threadId,
+      label: thread.title,
+      detail: trashThreadDetail(thread),
+      snapshot,
+    }
+  }
+
+  /**
+   * 清空聊天记录：会话外壳（标题/成员/关联工作区/自定义小窗名）保留，
+   * 消息、事实、共识、摘要、执行轨迹、附件、线程记忆全部清掉；旧数据由 host 移入回收站。
+   */
+  clearThreadHistory(threadId: string): ClearHistoryPlan {
+    const thread = this.requireThread(threadId)
+    const snapshot = sanitizeThreadSnapshot(thread)
+    const memories = this.state.memories
+      .filter((memory) => memory.scope === 'thread' && memory.threadId === threadId)
+      .map((memory) => cloneJson(memory))
+    const wakeExcerpts: Record<string, string[]> = {}
+    for (const [key, value] of Object.entries(this.state.wakeExcerpts)) {
+      if (key.endsWith(`:${threadId}`)) wakeExcerpts[key] = [...value]
+    }
+    thread.messages = []
+    thread.topic = thread.title
+    thread.shortSummary = ''
+    thread.summaryState = undefined
+    thread.summaryUntilSeq = 0
+    thread.facts = []
+    thread.factsVersion = undefined
+    thread.factsUntilSeq = 0
+    thread.consensusState = undefined
+    thread.consensusError = undefined
+    thread.traces = []
+    thread.floorDecisions = []
+    thread.blocked = undefined
+    thread.speakingPersonaId = undefined
+    thread.nextHint = undefined
+    thread.roundMode = 'idle'
+    thread.unread = 0
+    thread.updatedAt = Date.now()
+    this.dropThreadReferences(threadId)
+    return {
+      threadId,
+      label: thread.title,
+      detail: trashHistoryDetail(snapshot),
+      snapshot,
+      memories,
+      wakeExcerpts,
+    }
+  }
+
+  /**
+   * 删除角色（彻底连带口径）：
+   * - 角色从通讯录移除；
+   * - 它的私聊（dm）与三人小窗（triad）整个会话一起进回收站；
+   * - 群里只移除成员：群历史保留，写一条系统记录说明谁被移出；
+   * - 线程记忆 / 唤醒摘要 / pendingRecall / 运行时状态 / 主动私聊节流一起清理。
+   */
+  deletePersona(personaId: string): DeletePersonaPlan {
+    const persona = this.requirePersona(personaId)
+    const deletedIds = new Set(
+      this.state.threads
+        .filter((thread) => thread.kind !== 'group' && thread.memberIds.includes(personaId))
+        .map((thread) => thread.id),
+    )
+    const threads = this.state.threads
+      .filter((thread) => deletedIds.has(thread.id))
+      .map((thread) => sanitizeThreadSnapshot(thread))
+    const memberships: TrashPersonaMembership[] = []
+    for (const thread of this.state.threads) {
+      if (thread.kind !== 'group' || !thread.memberIds.includes(personaId)) continue
+      memberships.push({
+        threadId: thread.id,
+        index: thread.memberIds.indexOf(personaId),
+        activity: this.memberOf(thread, personaId)?.activity ?? persona.defaultActivity,
+      })
+    }
+    const memories = this.state.memories
+      .filter((memory) => memory.scope === 'thread' && memory.threadId !== undefined && deletedIds.has(memory.threadId))
+      .map((memory) => cloneJson(memory))
+    const wakeExcerpts: Record<string, string[]> = {}
+    for (const [key, value] of Object.entries(this.state.wakeExcerpts)) {
+      if (key.startsWith(`${personaId}:`) || [...deletedIds].some((id) => key.endsWith(`:${id}`))) {
+        wakeExcerpts[key] = [...value]
+      }
+    }
+
+    this.state.personas = this.state.personas.filter((item) => item.id !== personaId)
+    this.state.threads = this.state.threads.filter((thread) => !deletedIds.has(thread.id))
+    for (const id of deletedIds) this.dropThreadReferences(id)
+
+    // 群：只移除成员，并留一条历史记录（不然群里会"凭空少一个人"）。
+    const now = Date.now()
+    for (const thread of this.state.threads) {
+      if (thread.kind !== 'group') continue
+      const index = thread.memberIds.indexOf(personaId)
+      if (index < 0) continue
+      thread.memberIds.splice(index, 1)
+      thread.members = thread.members.filter((member) => member.personaId !== personaId)
+      if (thread.speakingPersonaId === personaId) thread.speakingPersonaId = undefined
+      if (thread.blocked?.personaId === personaId) thread.blocked = undefined
+      this.pushMessage(thread, {
+        kind: 'system',
+        authorName: '系统主持',
+        text: `角色「${persona.name}」已被删除，已移出本群。`,
+      }, now)
+    }
+
+    // 角色级运行时状态 / 主动私聊节流 / 唤醒摘要。
+    this.agentStates.delete(personaId)
+    delete this.state.lastProactiveAt[personaId]
+    for (const key of Object.keys(this.state.wakeExcerpts)) {
+      if (key.startsWith(`${personaId}:`)) delete this.state.wakeExcerpts[key]
+    }
+    const recall = this.state.pendingRecall
+    if (recall && (
+      recall.personaId === personaId
+      || deletedIds.has(recall.threadId)
+      || deletedIds.has(recall.targetThreadId)
+    )) {
+      this.state.pendingRecall = null
+    }
+
+    return {
+      persona: cloneJson(persona),
+      label: persona.name,
+      detail: trashPersonaDetail(persona, threads, memberships),
+      threads,
+      memberships,
+      memories,
+      wakeExcerpts,
+    }
+  }
+
+  /**
+   * 恢复会话（回收站 → 列表）。
+   * - 同 id 会话已在列表：拒绝（说明已经恢复过）；
+   * - DM / 三人小窗里的角色已被删掉：拒绝并提示先恢复角色（否则恢复出一个没有成员的空壳）；
+   * - 群里有成员已不存在：保留会话、移除失效成员并写系统记录（不静默丢成员关系）。
+   */
+  restoreThread(snapshot: Thread): Thread {
+    if (this.state.threads.some((thread) => thread.id === snapshot.id)) {
+      throw new Error('回收站里的这个会话已经恢复过了')
+    }
+    const thread = cloneJson(snapshot)
+    const missing = thread.memberIds.filter((id) => !this.state.personas.some((persona) => persona.id === id))
+    if (missing.length && thread.kind !== 'group') {
+      throw new Error('会话里的角色已被删除，恢复不了；请先到回收站恢复角色，再恢复这个会话')
+    }
+    thread.memberIds = thread.memberIds.filter((id) => !missing.includes(id))
+    thread.members = thread.members.filter((member) => !missing.includes(member.personaId))
+    thread.speakingPersonaId = undefined
+    thread.blocked = undefined
+    thread.floorDecisions = []
+    thread.unread = 0
+    thread.roundMode = 'idle'
+    thread.updatedAt = Date.now()
+    if (missing.length) {
+      this.pushMessage(thread, {
+        kind: 'system',
+        authorName: '系统主持',
+        text: '恢复会话时移除了已不存在的角色。',
+      })
+    }
+    this.state.threads.push(thread)
+    return thread
+  }
+
+  /**
+   * 恢复「清空聊天记录」：把快照里的消息/事实/共识/摘要/轨迹写回**同一个会话**。
+   * 只有当前会话一条消息都没有时才允许（否则恢复会盖掉清空后新聊的内容）。
+   */
+  restoreThreadHistory(
+    snapshot: Thread,
+    extras?: Pick<TrashPayload, 'memories' | 'wakeExcerpts'>,
+  ): Thread {
+    const thread = this.requireThread(snapshot.id)
+    if (!canRestoreHistory(thread)) {
+      throw new Error('这个会话清空后又有新消息，不能直接恢复；可先删除会话再恢复，或放弃这条回收站记录')
+    }
+    const restored = cloneJson(snapshot)
+    thread.messages = restored.messages
+    thread.topic = restored.topic
+    thread.shortSummary = restored.shortSummary
+    thread.summaryState = restored.summaryState
+    thread.summaryUntilSeq = restored.summaryUntilSeq
+    thread.facts = restored.facts
+    thread.factsVersion = restored.factsVersion
+    thread.factsUntilSeq = restored.factsUntilSeq
+    thread.consensusState = restored.consensusState
+    thread.consensusError = undefined
+    thread.traces = restored.traces
+    thread.blocked = undefined
+    thread.speakingPersonaId = undefined
+    thread.nextHint = undefined
+    thread.floorDecisions = []
+    thread.roundMode = 'idle'
+    thread.unread = 0
+    thread.updatedAt = Date.now()
+    for (const memory of extras?.memories ?? []) {
+      if (!this.state.memories.some((item) => item.id === memory.id)) this.state.memories.push(cloneJson(memory))
+    }
+    for (const [key, value] of Object.entries(extras?.wakeExcerpts ?? {})) {
+      if (!this.state.wakeExcerpts[key]) this.state.wakeExcerpts[key] = [...value]
+    }
+    return thread
+  }
+
+  /**
+   * 恢复角色：角色 + 被连带删除的会话 + 群成员位置 + 记忆/唤醒摘要一起还原。
+   * 如果某个会话/群在角色删除后又被删掉，跳过并如实回报（不假装全部恢复）。
+   */
+  restorePersona(payload: Pick<TrashPayload, 'persona' | 'threads' | 'memberships' | 'memories' | 'wakeExcerpts'>): RestorePersonaResult {
+    const source = payload.persona
+    if (!source) throw new Error('回收站记录里没有角色数据，不能恢复')
+    if (this.state.personas.some((persona) => persona.id === source.id)) {
+      throw new Error('这个角色已经恢复过了')
+    }
+    const persona = cloneJson(source)
+    this.state.personas.push(persona)
+
+    const restoredThreads: Thread[] = []
+    const skippedThreadIds: string[] = []
+    for (const snapshot of payload.threads ?? []) {
+      if (this.state.threads.some((thread) => thread.id === snapshot.id)) {
+        skippedThreadIds.push(snapshot.id)
+        continue
+      }
+      const others = snapshot.memberIds.filter((id) => id !== persona.id)
+      if (others.some((id) => !this.state.personas.some((item) => item.id === id))) {
+        skippedThreadIds.push(snapshot.id)
+        continue
+      }
+      const thread = cloneJson(snapshot)
+      thread.speakingPersonaId = undefined
+      thread.blocked = undefined
+      thread.floorDecisions = []
+      thread.roundMode = 'idle'
+      thread.unread = 0
+      thread.updatedAt = Date.now()
+      this.state.threads.push(thread)
+      restoredThreads.push(thread)
+    }
+
+    const skippedMembershipThreadIds: string[] = []
+    for (const membership of payload.memberships ?? []) {
+      const thread = this.state.threads.find((item) => item.id === membership.threadId)
+      if (!thread || thread.kind !== 'group') {
+        skippedMembershipThreadIds.push(membership.threadId)
+        continue
+      }
+      if (thread.memberIds.includes(persona.id)) continue
+      const index = Math.max(0, Math.min(membership.index, thread.memberIds.length))
+      thread.memberIds.splice(index, 0, persona.id)
+      thread.members.splice(index, 0, {
+        personaId: persona.id,
+        activity: membership.activity ?? persona.defaultActivity,
+        completedRound: false,
+        passedRound: false,
+      })
+      this.pushMessage(thread, {
+        kind: 'system',
+        authorName: '系统主持',
+        text: `角色「${persona.name}」已从回收站恢复，重新加入本群。`,
+      })
+    }
+
+    for (const memory of payload.memories ?? []) {
+      if (!this.state.memories.some((item) => item.id === memory.id)) this.state.memories.push(cloneJson(memory))
+    }
+    for (const [key, value] of Object.entries(payload.wakeExcerpts ?? {})) {
+      if (!this.state.wakeExcerpts[key]) this.state.wakeExcerpts[key] = [...value]
+    }
+    repairDerivedThreadTitles(this.state)
+    return { persona, threads: restoredThreads, skippedThreadIds, skippedMembershipThreadIds }
+  }
+
+  /** 删掉一个会话后，把只属于它的引用（线程记忆 / 唤醒摘要 / 跨场召回）清干净。 */
+  private dropThreadReferences(threadId: string): void {
+    this.state.memories = this.state.memories.filter(
+      (memory) => !(memory.scope === 'thread' && memory.threadId === threadId),
+    )
+    for (const key of Object.keys(this.state.wakeExcerpts)) {
+      if (key.endsWith(`:${threadId}`)) delete this.state.wakeExcerpts[key]
+    }
+    const recall = this.state.pendingRecall
+    if (recall && (recall.threadId === threadId || recall.targetThreadId === threadId)) {
+      this.state.pendingRecall = null
+    }
   }
 
   /** 客户端 UI：自动打开私聊时切到那个小窗。 */

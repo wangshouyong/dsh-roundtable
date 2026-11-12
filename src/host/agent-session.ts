@@ -158,6 +158,11 @@ export interface NativeBridge {
   }
   complete(input: NativeBridgeInput): Promise<{ text: string; trace?: TurnStepTrace[]; toolStats?: NativeToolStats }>
   debug?(): NativeDebugInfo
+  /**
+   * 删除会话 / 删除角色 / 清空聊天记录后，释放匹配的原生会话。
+   * 不释放的话，被删掉的历史还留在宿主的 agent 会话内存里，模型仍可能"记得"。
+   */
+  forget?(filter: { personaId?: string; threadId?: string }): Promise<number>
 }
 
 export interface NativeAgentSessionsOptions {
@@ -611,6 +616,32 @@ export class NativeAgentSessions {
         void entry.handle.dispose().catch(() => undefined)
       })
     }
+  }
+
+  /**
+   * 按「角色 × 群」释放匹配的原生会话（sessionKey = `personaId:threadId`）。
+   * 删除会话 / 删除角色 / 清空聊天记录后调用：被删的历史不能继续留在宿主内存里。
+   * 返回释放条数；没匹配到就是 0（不假装做了事）。
+   */
+  async forget(filter: { personaId?: string; threadId?: string }): Promise<number> {
+    const personaId = filter.personaId?.trim()
+    const threadId = filter.threadId?.trim()
+    if (!personaId && !threadId) return 0
+    const matches: { key: string; entry: Entry }[] = []
+    for (const [key, entry] of this.sessions) {
+      const sep = key.indexOf(':')
+      const keyPersona = sep >= 0 ? key.slice(0, sep) : key
+      const keyThread = sep >= 0 ? key.slice(sep + 1) : ''
+      if (personaId && keyPersona !== personaId) continue
+      if (threadId && keyThread !== threadId) continue
+      matches.push({ key, entry })
+    }
+    for (const item of matches) {
+      this.sessions.delete(item.key)
+      await this.hideFromSidebar(item.entry.sessionId)
+      await item.entry.handle.dispose().catch(() => undefined)
+    }
+    return matches.length
   }
 
   async complete(input: NativeBridgeInput): Promise<{ text: string; trace?: TurnStepTrace[]; toolStats?: NativeToolStats }> {
@@ -1161,6 +1192,7 @@ export function createNativeRuntime(options: {
       status: () => sessions.status(),
       complete: (input) => sessions.complete(input),
       debug: () => sessions.debug(),
+      forget: (filter) => sessions.forget(filter),
     },
     disposeAll: () => sessions.disposeAll(),
   }

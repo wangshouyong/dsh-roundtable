@@ -39,7 +39,7 @@ describe('state.json 坏数据清洗', () => {
         roundMode: 'idle',
         createdAt: 0,
         updatedAt: 0,
-        // 手工演示数据 / 外部脚本可能写 kind:'text'（真实遇到：D:\new_test\pojia\demo）
+        // 手工演示数据 / 外部脚本可能写 kind:'text'（真实遇到：演示数据目录）
         messages: [
           { id: 'm1', threadId: 't1', kind: 'text', authorName: '你', text: '我的发言', createdAt: 1 },
           { id: 'm2', threadId: 't1', kind: 'text', authorId: 'p1', authorName: '苏晓', text: '角色发言', createdAt: 2 },

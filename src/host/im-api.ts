@@ -39,6 +39,10 @@ import { buildSample } from '../core/calibration-samples.ts'
 import { buildCalibrationReport } from '../core/calibrator.ts'
 import { planBudget } from '../core/budget-plan.ts'
 import { buildMemoryIndex } from './memory-index.ts'
+import { addTrashEntry, listTrash, purgeTrash, restoreTrashEntry } from './trash-store.ts'
+import { listGroupFiles, readGroupFile, type GroupFileListing } from './group-files.ts'
+import { mediaTypeFor, isTextLike } from './media-type.ts'
+import type { TrashEntryMeta, TrashKind, TrashPayload } from '../core/trash.ts'
 
 /** DSH 附件存储（ctx.attachments）的最小接口面：我们只用「存文件/存图片」两种。 */
 export interface DshAttachmentStore {
@@ -79,10 +83,6 @@ export interface ImApiDeps {
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 const MAX_FILE_BYTES = 20 * 1024 * 1024
 const MAX_INLINE_TEXT = 20_000
-const TEXT_EXTENSIONS = new Set([
-  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'md', 'txt', 'css', 'scss',
-  'yml', 'yaml', 'toml', 'py', 'go', 'rs', 'java', 'sh', 'ps1', 'csv', 'log', 'xml', 'html',
-])
 
 function safeAttachmentName(name: string): string {
   const base = name.replace(/[^\w.\-\u4e00-\u9fa5]/g, '_').replace(/^\.+/, '')
@@ -107,25 +107,6 @@ function inlineTextPreview(data: Uint8Array): string | undefined {
   // 只在本轮确实截断时才剥尾部 U+FFFD；正文本来就有替换字符时不能吞。
   const cleaned = truncated ? text.replace(/\uFFFD+$/, '') : text
   return Array.from(cleaned).slice(0, MAX_INLINE_TEXT).join('')
-}
-
-function mediaTypeFor(name: string, declared?: string): string {
-  if (declared?.trim()) return declared.trim()
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (['png'].includes(ext)) return 'image/png'
-  if (['jpg', 'jpeg'].includes(ext)) return 'image/jpeg'
-  if (ext === 'webp') return 'image/webp'
-  if (ext === 'gif') return 'image/gif'
-  if (['md', 'txt', 'log', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'css', 'scss', 'yml', 'yaml', 'toml', 'py', 'go', 'rs', 'java', 'sh', 'ps1', 'csv', 'xml', 'html'].includes(ext)) return 'text/plain'
-  if (ext === 'json') return 'application/json'
-  return 'application/octet-stream'
-}
-
-function isTextLike(name: string, mediaType: string): boolean {
-  if (mediaType.startsWith('text/')) return true
-  if (['application/json', 'application/xml'].includes(mediaType)) return true
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  return TEXT_EXTENSIONS.has(ext)
 }
 
 /** 内容嗅探：声明/扩展名说是图片、实际不是时降级为文件（不当安全边界，只做校正常识）。 */
@@ -378,6 +359,95 @@ export function createImApi(deps: ImApiDeps) {
       rememberRoot(root)
       // 派生数据（事件/facts/摘要/指标）落盘失败时如实回报，不再让客户端以为「存好了」。
       return saved.warnings.length ? { path: saved.path, warnings: saved.warnings } : { path: saved.path }
+    },
+    // ── 回收站（软删除）：会话/群数据目录搬进 .dsh-im/trash，客户端只管清单与状态 ──
+    async trashList(projectRoot?: string): Promise<{ entries: TrashEntryMeta[] }> {
+      await loadKnownRoots()
+      const root = rootOf(projectRoot, true)
+      return { entries: await listTrash(root) }
+    },
+    async trashAdd(body: {
+      projectRoot?: string
+      kind?: string
+      label?: string
+      detail?: string
+      threadIds?: unknown
+      payload?: unknown
+      replaceOnRestore?: boolean
+    }): Promise<{ entry: TrashEntryMeta }> {
+      await loadKnownRoots()
+      const root = rootOf(body.projectRoot, true)
+      const threadIds = Array.isArray(body.threadIds)
+        ? body.threadIds.filter((id): id is string => typeof id === 'string')
+        : []
+      const entry = await addTrashEntry(root, {
+        kind: body.kind as TrashKind,
+        ...(typeof body.label === 'string' ? { label: body.label } : {}),
+        ...(typeof body.detail === 'string' ? { detail: body.detail } : {}),
+        threadIds,
+        ...(body.payload && typeof body.payload === 'object' ? { payload: body.payload as TrashPayload } : {}),
+        replaceOnRestore: body.replaceOnRestore === true,
+      })
+      return { entry }
+    },
+    async trashRestore(body: { projectRoot?: string; id?: unknown }): Promise<{ meta: TrashEntryMeta; payload: TrashPayload }> {
+      await loadKnownRoots()
+      const root = rootOf(body.projectRoot, true)
+      const id = typeof body.id === 'string' ? body.id.trim() : ''
+      if (!id) throw Object.assign(new Error('id 必填'), { status: 400 })
+      return restoreTrashEntry(root, id)
+    },
+    async trashPurge(body: { projectRoot?: string; id?: unknown }): Promise<{ purged: number; failed: string[] }> {
+      await loadKnownRoots()
+      const root = rootOf(body.projectRoot, true)
+      const id = typeof body.id === 'string' ? body.id.trim() : ''
+      return purgeTrash(root, id || undefined)
+    },
+    /** 删除会话/角色、清空记录后释放对应原生会话（被删历史不能继续留在宿主内存）。 */
+    async nativeForget(body: { personaId?: unknown; threadId?: unknown }): Promise<{ disposed: number }> {
+      const personaId = typeof body.personaId === 'string' ? body.personaId.trim() : ''
+      const threadId = typeof body.threadId === 'string' ? body.threadId.trim() : ''
+      if (!personaId && !threadId) {
+        throw Object.assign(new Error('personaId 或 threadId 必填（不接受"全部清空"）'), { status: 400 })
+      }
+      const bridge = deps.native?.()
+      if (!bridge?.forget) return { disposed: 0 }
+      const disposed = await bridge.forget({
+        ...(personaId ? { personaId } : {}),
+        ...(threadId ? { threadId } : {}),
+      })
+      return { disposed }
+    },
+    /**
+     * 群工作区文件浏览（只读）：路径围栏在 `<根>/.dsh-im/groups/<threadId>/` 内，
+     * 内部账本（events/facts/metrics/receipts/...）不展示也不允许读。
+     */
+    async groupFiles(body: {
+      threadId?: unknown
+      projectRoot?: string
+      path?: unknown
+    }): Promise<GroupFileListing> {
+      await loadKnownRoots()
+      const root = rootOf(body.projectRoot, true)
+      const threadId = typeof body.threadId === 'string' ? body.threadId.trim() : ''
+      if (!threadId) throw Object.assign(new Error('threadId 必填'), { status: 400 })
+      assertSafeThreadId(threadId)
+      return listGroupFiles(root, threadId, typeof body.path === 'string' ? body.path : '')
+    },
+    /** 读一个群文件（原始字节；面板用 <img>/fetch 展示或下载）。 */
+    async groupFile(body: {
+      threadId?: unknown
+      projectRoot?: string
+      path?: unknown
+    }): Promise<{ bytes: Buffer; mediaType: string; name: string }> {
+      await loadKnownRoots()
+      const root = rootOf(body.projectRoot, true)
+      const threadId = typeof body.threadId === 'string' ? body.threadId.trim() : ''
+      if (!threadId) throw Object.assign(new Error('threadId 必填'), { status: 400 })
+      assertSafeThreadId(threadId)
+      const rel = typeof body.path === 'string' ? body.path : ''
+      if (!rel.trim()) throw Object.assign(new Error('path 必填'), { status: 400 })
+      return readGroupFile(root, threadId, rel)
     },
     /**
      * 数据根发现（只读）：当前根 + DSH 注册工作区 + 以前用过的根，各自有没有数据。

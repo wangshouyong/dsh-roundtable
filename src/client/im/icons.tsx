@@ -196,3 +196,25 @@ export function IconSpark(props: IconProps) {
     </svg>
   )
 }
+
+/** 回收站（删除 / 彻底删除） */
+export function IconTrash(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M2.8 4.4h10.4" />
+      <path d="M6.2 4.4V3.2c0-.5.4-.9.9-.9h1.8c.5 0 .9.4.9.9v1.2" />
+      <path d="M4.2 4.4 4.8 13c.05.5.5.9 1 .9h4.4c.5 0 .95-.4 1-.9l.6-8.6" />
+      <path d="M6.7 7v4.2M9.3 7v4.2" />
+    </svg>
+  )
+}
+
+/** 恢复（回收站 → 原位置） */
+export function IconRestore(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M2.8 8a5.2 5.2 0 1 0 1.6-3.7" />
+      <path d="M2.4 2.6v3.2h3.2" />
+    </svg>
+  )
+}

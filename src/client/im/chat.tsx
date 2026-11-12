@@ -10,8 +10,9 @@ import { Avatar } from '../Avatar.tsx'
 import { attachmentUrl, onNativeCompat, uploadAttachment } from '../httpStore.ts'
 import { blockedAdvice } from '../../core/blocked.ts'
 import { MentionText, fmt, useNarrow } from './shared.tsx'
-import { IconAlert, IconChat, IconChevronDown, IconFile, IconImage, IconPaperclip, IconSend, IconUsers } from './icons.tsx'
+import { IconAlert, IconChat, IconChevronDown, IconFile, IconImage, IconMore, IconPaperclip, IconSend, IconUsers } from './icons.tsx'
 import { PersonaProfile } from './persona-profile.tsx'
+import { GroupFilesPane } from './group-files.tsx'
 import { ActivityPane, FactsBoard, GroupRightPane, MemberPane, RoundPlan, traceToolLabel, type GroupRightTab } from './right-pane.tsx'
 import { useWorkspaces, WorkspacePicker } from './workspaces.tsx'
 
@@ -37,11 +38,14 @@ export function Chat(props: {
   onShowProfile: (id: string) => void
   onHideProfile: () => void
   onEditPersona: (p: Persona) => void
+  onDeletePersona: (p: Persona) => void
+  onClearThreadHistory: (t: Thread) => void
+  onDeleteThread: (t: Thread) => void
   projectRoot: string
   refresh: () => void
   models: ModelCatalog
 }) {
-  const { im, thread, draft, setDraft, run, profilePersona, onShowProfile, onHideProfile, onEditPersona, projectRoot, refresh, models } = props
+  const { im, thread, draft, setDraft, run, profilePersona, onShowProfile, onHideProfile, onEditPersona, onDeletePersona, onClearThreadHistory, onDeleteThread, projectRoot, refresh, models } = props
   const workspaces = useWorkspaces()
   const groupLike = thread.kind !== 'dm'
   // 群名是用户起的；三人小窗默认标题按角色名派生，点标题改名后锁定；DM 标题不可改（core 拒绝）。
@@ -71,9 +75,21 @@ export function Chat(props: {
   const [blockedOpen, setBlockedOpen] = useState(false)
   // 群名行内编辑：null = 不在编辑态；切群时丢弃草稿。
   const [titleDraft, setTitleDraft] = useState<string | null>(null)
+  // 顶部「…」会话菜单：清空聊天记录 / 删除会话（群叫解散群）。
+  const [headMenu, setHeadMenu] = useState(false)
+  // 会话文件弹窗（DM 没有右栏，用弹窗看群工作区；群/小窗在右栏「文件」Tab）。
+  const [filesOpen, setFilesOpen] = useState(false)
   useEffect(() => {
     setTitleDraft(null)
+    setHeadMenu(false)
+    setFilesOpen(false)
   }, [thread.id])
+  useEffect(() => {
+    if (!headMenu) return
+    const close = () => setHeadMenu(false)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [headMenu])
   // 换群 / 换一次中断（新的 blocked.at）时收起详情，避免把上一次的报错细节留在屏上。
   useEffect(() => {
     setBlockedOpen(false)
@@ -182,7 +198,9 @@ export function Chat(props: {
         ? <FactsBoard im={im} thread={thread} run={run} />
         : tab === 'queue'
           ? <RoundPlan im={im} thread={thread} />
-          : <ActivityPane im={im} thread={thread} filter={activityFilter} onFilter={setActivityFilter} onOpenTrace={setTraceDetail} />
+          : tab === 'files'
+            ? <GroupFilesPane thread={thread} projectRoot={thread.projectRoot} />
+            : <ActivityPane im={im} thread={thread} filter={activityFilter} onFilter={setActivityFilter} onOpenTrace={setTraceDetail} />
   )
 
   /** 提交群名：空/没改就丢弃；改了就落库（run 会刷新并触发保存）。 */
@@ -209,7 +227,19 @@ export function Chat(props: {
       <section className="col-chat">
         <header className="head">
           <div className="head-left">
-            {peer ? <Avatar persona={peer} /> : <div className="group-avatar" aria-hidden="true"><IconUsers size={18} /></div>}
+            {peer ? (
+              <button
+                type="button"
+                className="head-avatar-btn"
+                aria-label={`查看${peer.name}的角色资料`}
+                title="查看角色资料"
+                onClick={() => onShowProfile(peer.id)}
+              >
+                <Avatar persona={peer} />
+              </button>
+            ) : (
+              <div className="group-avatar" aria-hidden="true"><IconUsers size={18} /></div>
+            )}
             <div>
               {canRename && titleDraft !== null ? (
                 <input
@@ -256,13 +286,57 @@ export function Chat(props: {
               </div>
             </div>
           </div>
-          {groupLike && (
-            <div className="head-actions">
-              <button className="primary" onClick={() => void startReview()}>开始评审</button>
-              <button onClick={() => run(() => im.requestSummary(thread.id))}>先汇总</button>
-              <button onClick={() => run(() => im.pauseRound(thread.id))}>全员暂停</button>
+          <div className="head-actions">
+            {groupLike ? (
+              <>
+                <button className="primary" onClick={() => void startReview()}>开始评审</button>
+                <button onClick={() => run(() => im.requestSummary(thread.id))}>先汇总</button>
+                <button onClick={() => run(() => im.pauseRound(thread.id))}>全员暂停</button>
+              </>
+            ) : null}
+            <div className="head-more-wrap">
+              <button
+                type="button"
+                className="head-more-btn"
+                aria-label="会话操作"
+                aria-haspopup="menu"
+                aria-expanded={headMenu}
+                title="清空聊天记录 / 删除会话"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setHeadMenu((value) => !value)
+                }}
+              >
+                <IconMore size={14} />
+              </button>
+              {headMenu ? (
+                <div className="menu head-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setHeadMenu(false); setFilesOpen(true) }}
+                  >
+                    {groupLike ? '群文件' : '会话文件'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setHeadMenu(false); onClearThreadHistory(thread) }}
+                  >
+                    清空聊天记录
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="danger"
+                    onClick={() => { setHeadMenu(false); onDeleteThread(thread) }}
+                  >
+                    {groupLike ? '解散群' : '删除会话'}
+                  </button>
+                </div>
+              ) : null}
             </div>
-          )}
+          </div>
         </header>
         {groupLike && narrow ? (
           <div className="narrow-bar">
@@ -270,6 +344,7 @@ export function Chat(props: {
             <button type="button" onClick={() => setOverlayTab('facts')}>任务板 {groupFacts.length}</button>
             <button type="button" onClick={() => setOverlayTab('queue')}>候选 {pendingQueue}</button>
             <button type="button" onClick={() => setOverlayTab('activity')}>执行 {activityCount}</button>
+            <button type="button" onClick={() => setOverlayTab('files')}>文件</button>
           </div>
         ) : null}
         {/* 本轮中断 = 当前轮状态，不是历史消息：固定在 header 下方，任何滚动位置都能看到并处理。
@@ -422,8 +497,21 @@ export function Chat(props: {
                   <Fragment key={m.id}>
                     {divider}
                     <div id={`msg-${m.seq ?? m.id}`} className={`msg ${mine ? 'mine' : ''}${grouped ? ' grouped' : ''}`}>
-                    {grouped ? <div className="msg-gutter" /> : (
-                      <Avatar persona={mine ? undefined : author} text={mine ? '你' : m.authorName} />
+                    {grouped ? <div className="msg-gutter" /> : mine ? (
+                      <Avatar text="你" />
+                    ) : author ? (
+                      // 点消息头像 = 打开/切换右侧角色资料（DM 关掉资料后从这里或标题头像重开）。
+                      <button
+                        type="button"
+                        className="msg-avatar-btn"
+                        aria-label={`查看${m.authorName}的角色资料`}
+                        title="查看角色资料"
+                        onClick={() => onShowProfile(author.id)}
+                      >
+                        <Avatar persona={author} text={m.authorName} />
+                      </button>
+                    ) : (
+                      <Avatar text={m.authorName} />
                     )}
                     <div className="msg-main">
                       {grouped ? null : (
@@ -616,6 +704,7 @@ export function Chat(props: {
           thread={thread}
           onClose={onHideProfile}
           onEdit={() => onEditPersona(profilePersona)}
+          onDelete={() => onDeletePersona(profilePersona)}
           models={models}
           onMessage={() => {
             const t = im.openDm(profilePersona.id, projectRoot)
@@ -655,10 +744,25 @@ export function Chat(props: {
               <button type="button" className={overlayTab === 'facts' ? 'on' : ''} onClick={() => setOverlayTab('facts')}>任务板</button>
               <button type="button" className={overlayTab === 'queue' ? 'on' : ''} onClick={() => setOverlayTab('queue')}>候选</button>
               <button type="button" className={overlayTab === 'activity' ? 'on' : ''} onClick={() => setOverlayTab('activity')}>执行</button>
+              <button type="button" className={overlayTab === 'files' ? 'on' : ''} onClick={() => setOverlayTab('files')}>文件</button>
             </div>
             <div className="right-body">
               {rightContent(overlayTab, (personaId) => { setActivityFilter(personaId); setOverlayTab('activity') })}
             </div>
+          </div>
+        </div>
+      ) : null}
+      {filesOpen ? (
+        <div
+          className="ws-dialog-mask"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setFilesOpen(false) }}
+        >
+          <div className="ws-dialog files-dialog" role="dialog" aria-label={groupLike ? '群文件' : '会话文件'}>
+            <div className="ws-dialog-head">
+              <h2>{groupLike ? '群文件' : '会话文件'}</h2>
+              <button type="button" className="ws-dialog-close" onClick={() => setFilesOpen(false)}>关闭</button>
+            </div>
+            <GroupFilesPane thread={thread} projectRoot={thread.projectRoot} />
           </div>
         </div>
       ) : null}

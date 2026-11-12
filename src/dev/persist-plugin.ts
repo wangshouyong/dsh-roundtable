@@ -36,6 +36,8 @@ export function imPersistPlugin(projectRoot = process.env.DSH_IM_DEV_ROOT ?? pro
     projectRoot: () => projectRoot,
     llm: () => previewLlm,
     toolGroups: () => toolCatalog,
+    // dev 预览让 `?root=` 指定的绝对路径也能通过回收站/状态接口的根白名单。
+    workspaces: () => [{ path: projectRoot }],
   })
   return {
     name: 'im-persist',
@@ -120,6 +122,77 @@ export function imPersistPlugin(projectRoot = process.env.DSH_IM_DEV_ROOT ?? pro
           return
         }
         send(res, 200, await api.preflight(JSON.parse(await readBody(req))))
+      }))
+      // 回收站（dev 预览与真实宿主同一套实现，只是没有 ctx.agents，native-forget 直接返回 0）。
+      server.middlewares.use('/api/im/trash/add', (req, res, next) => route(req, res, next, async () => {
+        if (req.method !== 'POST') {
+          next()
+          return
+        }
+        send(res, 200, await api.trashAdd(JSON.parse(await readBody(req))))
+      }))
+      server.middlewares.use('/api/im/trash/restore', (req, res, next) => route(req, res, next, async () => {
+        if (req.method !== 'POST') {
+          next()
+          return
+        }
+        send(res, 200, await api.trashRestore(JSON.parse(await readBody(req))))
+      }))
+      server.middlewares.use('/api/im/trash/purge', (req, res, next) => route(req, res, next, async () => {
+        if (req.method !== 'POST') {
+          next()
+          return
+        }
+        send(res, 200, await api.trashPurge(JSON.parse(await readBody(req))))
+      }))
+      server.middlewares.use('/api/im/trash', (req, res, next) => route(req, res, next, async () => {
+        if (req.method !== 'GET') {
+          next()
+          return
+        }
+        // 挂载点后面的 query 仍在 req.url 上；路径已由挂载前缀吃掉。
+        send(res, 200, await api.trashList())
+      }))
+      server.middlewares.use('/api/im/native-forget', (req, res, next) => route(req, res, next, async () => {
+        if (req.method !== 'POST') {
+          next()
+          return
+        }
+        const body = JSON.parse(await readBody(req)) as { personaId?: string; threadId?: string }
+        if (!body.personaId?.trim() && !body.threadId?.trim()) {
+          send(res, 400, { error: 'personaId 或 threadId 必填' })
+          return
+        }
+        // dev 没有原生会话：如实返回 0（客户端 fire-and-forget，不挡删除流程）。
+        send(res, 200, { disposed: 0 })
+      }))
+      // 群工作区文件（只读）：与真实宿主同一套 host 实现。
+      server.middlewares.use('/api/im/group-files', (req, res, next) => route(req, res, next, async () => {
+        if (req.method !== 'GET') {
+          next()
+          return
+        }
+        const query = new URL(req.url ?? '/', 'http://local').searchParams
+        send(res, 200, await api.groupFiles({
+          threadId: query.get('threadId') ?? undefined,
+          path: query.get('path') ?? undefined,
+        }))
+      }))
+      server.middlewares.use('/api/im/group-file', (req, res, next) => route(req, res, next, async () => {
+        if (req.method !== 'GET') {
+          next()
+          return
+        }
+        const query = new URL(req.url ?? '/', 'http://local').searchParams
+        const file = await api.groupFile({
+          threadId: query.get('threadId') ?? undefined,
+          path: query.get('path') ?? undefined,
+        })
+        res.statusCode = 200
+        res.setHeader('content-type', file.mediaType)
+        res.setHeader('content-length', String(file.bytes.byteLength))
+        res.setHeader('cache-control', 'no-store')
+        res.end(file.bytes)
       }))
     },
   }

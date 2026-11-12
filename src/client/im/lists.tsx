@@ -1,5 +1,5 @@
 /** 左栏列表：会话行 / 群列表 / 通讯录 / 联系人行。 */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ImService } from '../../core/im.ts'
 import { stripLegacyReasoning } from '../../core/text.ts'
 import type { Persona, Thread } from '../../core/types.ts'
@@ -7,6 +7,7 @@ import { findModel, type ModelCatalog } from '../../host/models.ts'
 import { Avatar } from '../Avatar.tsx'
 import { WorkspacePicker, useWorkspaces } from './workspaces.tsx'
 import { formatListStamp } from '../../core/time.ts'
+import { IconMore } from './icons.tsx'
 
 export function SessionRow(props: {
   thread: Thread
@@ -14,8 +15,18 @@ export function SessionRow(props: {
   active: boolean
   im: ImService
   onOpen: (t: Thread) => void
+  onClearHistory: (t: Thread) => void
+  onDeleteThread: (t: Thread) => void
 }) {
-  const { thread: t, index, active, im, onOpen } = props
+  const { thread: t, index, active, im, onOpen, onClearHistory, onDeleteThread } = props
+  const [menu, setMenu] = useState(false)
+  // 点页面其它地方关闭菜单（菜单项自己 stopPropagation）。
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(false)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [menu])
   const peer = t.kind === 'dm' ? im.state.personas.find((p) => p.id === t.memberIds[0]) : undefined
   const kind = t.kind === 'group' ? '群' : t.kind === 'triad' ? '三人小窗' : ''
   return (
@@ -26,6 +37,20 @@ export function SessionRow(props: {
           <span className="title">{t.title}</span>
           {kind ? <em className="kind">{kind}</em> : null}
           <span className="time">{formatListStamp(t.updatedAt)}</span>
+          <button
+            type="button"
+            className="row-more"
+            aria-label={`${t.title} 的操作`}
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            title="清空聊天记录 / 删除会话"
+            onClick={(event) => {
+              event.stopPropagation()
+              setMenu((value) => !value)
+            }}
+          >
+            <IconMore size={14} />
+          </button>
         </div>
         <div className="preview-row">
           <span className="preview">
@@ -35,6 +60,25 @@ export function SessionRow(props: {
           {t.unread > 0 ? <span className="unread">{t.unread > 99 ? '99+' : t.unread}</span> : null}
         </div>
       </div>
+      {menu ? (
+        <div className="menu row-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { setMenu(false); onClearHistory(t) }}
+          >
+            清空聊天记录
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="danger"
+            onClick={() => { setMenu(false); onDeleteThread(t) }}
+          >
+            {t.kind === 'group' ? '解散群' : '删除会话'}
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -46,8 +90,10 @@ export function GroupList(props: {
   activeId?: string
   onOpen: (t: Thread) => void
   onCreate: () => void
+  onClearHistory: (t: Thread) => void
+  onDeleteThread: (t: Thread) => void
 }) {
-  const { im, q, setQ, activeId, onOpen, onCreate } = props
+  const { im, q, setQ, activeId, onOpen, onCreate, onClearHistory, onDeleteThread } = props
   const groups = im.state.threads.filter((t) => t.kind === 'group' && (!q || t.title.includes(q)))
   const triads = im.state.threads.filter((t) => t.kind === 'triad' && (!q || t.title.includes(q)))
   return (
@@ -56,11 +102,11 @@ export function GroupList(props: {
       <div className="group-label">我的群（{groups.length}）</div>
       {groups.length === 0 && <div className="empty sm">还没有群。到通讯录勾选角色后点「创建群聊」。</div>}
       {groups.map((t, i) => (
-        <SessionRow key={t.id} thread={t} index={i} active={t.id === activeId} im={im} onOpen={onOpen} />
+        <SessionRow key={t.id} thread={t} index={i} active={t.id === activeId} im={im} onOpen={onOpen} onClearHistory={onClearHistory} onDeleteThread={onDeleteThread} />
       ))}
       {triads.length > 0 && <div className="group-label">三人小窗（{triads.length}）</div>}
       {triads.map((t, i) => (
-        <SessionRow key={t.id} thread={t} index={i} active={t.id === activeId} im={im} onOpen={onOpen} />
+        <SessionRow key={t.id} thread={t} index={i} active={t.id === activeId} im={im} onOpen={onOpen} onClearHistory={onClearHistory} onDeleteThread={onDeleteThread} />
       ))}
       <button type="button" className="text-link" onClick={onCreate}>＋ 去通讯录拉群</button>
     </div>
