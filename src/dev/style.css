@@ -3815,3 +3815,57 @@ body {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* ㉓ 邀请成员进群（2026-11-12） -------------------------------------------- */
+.member-head .head-icons {
+  align-items: center;
+}
+.invite-link {
+  display: block;
+  margin: 10px auto 4px;
+  width: calc(100% - 24px);
+  text-align: center;
+}
+.invite-dialog {
+  width: min(540px, calc(100vw - 32px));
+  max-height: min(84vh, 720px);
+}
+.invite-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 8px;
+  padding: 0 20px;
+}
+.invite-body .invite-search {
+  margin: 0;
+  width: 100%;
+}
+.invite-list {
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: 46vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 8px;
+  overscroll-behavior: contain;
+}
+.invite-row {
+  margin: 0;
+  cursor: pointer;
+}
+.invite-row.on {
+  background: var(--sel);
+}
+.confirm-actions button.primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.confirm-actions button.primary:hover:not(:disabled) {
+  background: var(--blue-hover);
+  border-color: var(--blue-hover);
+  color: var(--on-accent);
+}

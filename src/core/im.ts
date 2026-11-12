@@ -663,6 +663,42 @@ export class ImService {
     if (m) m.activity = activity
   }
 
+  /**
+   * 邀请角色进群（只有群支持；私聊/三人小窗请新建会话）。
+   * - 先校验全部 personaId 再落状态，不会"加了一半"；
+   * - 已在群里的角色跳过并如实回报；
+   * - 入群写一条系统记录；活跃度沿用角色默认值，本轮未发言（下一轮完整参与）。
+   */
+  addMembers(threadId: string, personaIds: readonly string[]): { thread: Thread; added: Persona[]; skipped: string[] } {
+    const thread = this.requireThread(threadId)
+    if (thread.kind !== 'group') {
+      throw new Error('只有群可以邀请成员；私聊/三人小窗请新建会话')
+    }
+    const unique = [...new Set(personaIds.map((id) => id.trim()).filter(Boolean))]
+    if (unique.length === 0) return { thread, added: [], skipped: [] }
+    const personas = unique.map((id) => this.requirePersona(id))
+    const added = personas.filter((persona) => !thread.memberIds.includes(persona.id))
+    const skipped = personas
+      .filter((persona) => thread.memberIds.includes(persona.id))
+      .map((persona) => persona.id)
+    if (added.length === 0) return { thread, added: [], skipped }
+    for (const persona of added) {
+      thread.memberIds.push(persona.id)
+      thread.members.push({
+        personaId: persona.id,
+        activity: persona.defaultActivity,
+        completedRound: false,
+        passedRound: false,
+      })
+    }
+    this.pushMessage(thread, {
+      kind: 'system',
+      authorName: '系统主持',
+      text: `已邀请「${added.map((persona) => persona.name).join('、')}」加入本群。`,
+    })
+    return { thread, added, skipped }
+  }
+
   // ── 软删除 / 清空 / 恢复（回收站） ─────────────────────────────────────
   //
   // 这一层只改**内存状态**并返回快照计划；物理目录搬运由 host 的回收站负责

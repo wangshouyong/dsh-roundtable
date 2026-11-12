@@ -13,6 +13,7 @@ import { MentionText, fmt, useNarrow } from './shared.tsx'
 import { IconAlert, IconChat, IconChevronDown, IconFile, IconImage, IconMore, IconPaperclip, IconSend, IconUsers } from './icons.tsx'
 import { PersonaProfile } from './persona-profile.tsx'
 import { GroupFilesPane } from './group-files.tsx'
+import { InviteMembersDialog } from './invite-members.tsx'
 import { ActivityPane, FactsBoard, GroupRightPane, MemberPane, RoundPlan, traceToolLabel, type GroupRightTab } from './right-pane.tsx'
 import { useWorkspaces, WorkspacePicker } from './workspaces.tsx'
 
@@ -79,10 +80,13 @@ export function Chat(props: {
   const [headMenu, setHeadMenu] = useState(false)
   // 会话文件弹窗（DM 没有右栏，用弹窗看群工作区；群/小窗在右栏「文件」Tab）。
   const [filesOpen, setFilesOpen] = useState(false)
+  // 邀请成员进群（只有群有；从成员区/顶栏菜单打开）。
+  const [inviteOpen, setInviteOpen] = useState(false)
   useEffect(() => {
     setTitleDraft(null)
     setHeadMenu(false)
     setFilesOpen(false)
+    setInviteOpen(false)
   }, [thread.id])
   useEffect(() => {
     if (!headMenu) return
@@ -193,7 +197,7 @@ export function Chat(props: {
 
   const rightContent = (tab: GroupRightTab, onActivity = (personaId: string) => { setActivityFilter(personaId); setRightTab('activity') }) => (
     tab === 'members'
-      ? <MemberPane im={im} thread={thread} refresh={refresh} onShowProfile={onShowProfile} onShowActivity={onActivity} />
+      ? <MemberPane im={im} thread={thread} refresh={refresh} onShowProfile={onShowProfile} onShowActivity={onActivity} onInvite={() => setInviteOpen(true)} />
       : tab === 'facts'
         ? <FactsBoard im={im} thread={thread} run={run} />
         : tab === 'queue'
@@ -209,6 +213,16 @@ export function Chat(props: {
     setTitleDraft(null)
     if (!next || next === thread.title) return
     void run(() => im.setThreadTitle(thread.id, next))
+  }
+
+  /** 邀请成员：调核心 addMembers 后 refresh（触发落盘），把新增/跳过结果交回弹窗如实反馈。 */
+  async function inviteMembers(personaIds: string[]): Promise<{ added: string[]; skipped: string[] }> {
+    const result = im.addMembers(thread.id, personaIds)
+    refresh()
+    return {
+      added: result.added.map((persona) => persona.name),
+      skipped: result.skipped.map((id) => im.state.personas.find((persona) => persona.id === id)?.name ?? id),
+    }
   }
 
   function sendDraft() {
@@ -311,6 +325,15 @@ export function Chat(props: {
               </button>
               {headMenu ? (
                 <div className="menu head-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+                  {thread.kind === 'group' ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setHeadMenu(false); setInviteOpen(true) }}
+                    >
+                      邀请成员
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     role="menuitem"
@@ -557,6 +580,11 @@ export function Chat(props: {
               })}
             </>
           )}
+          {/* 空会话（没有用户/角色消息）时 hero 会盖住聊天流；系统记录单独补一排，
+              否则「已邀请 X 加入本群」只能在左侧预览里看到。 */}
+          {empty ? chatMsgs.map((m) => (
+            <div key={m.id} className="note">{<MentionText text={m.text} />}</div>
+          )) : null}
         </div>
         <div className="floor">
           <span className={`floor-dot${thread.speakingPersonaId ? ' live' : lastWait ? ' wait' : ''}`} />
@@ -722,6 +750,7 @@ export function Chat(props: {
           run={run}
           refresh={refresh}
           onShowProfile={onShowProfile}
+          onInvite={() => setInviteOpen(true)}
           tab={rightTab}
           onTab={setRightTab}
           activityFilter={activityFilter}
@@ -765,6 +794,14 @@ export function Chat(props: {
             <GroupFilesPane thread={thread} projectRoot={thread.projectRoot} />
           </div>
         </div>
+      ) : null}
+      {inviteOpen && thread.kind === 'group' ? (
+        <InviteMembersDialog
+          im={im}
+          thread={thread}
+          onClose={() => setInviteOpen(false)}
+          onInvite={inviteMembers}
+        />
       ) : null}
       {traceDetail ? (
         <div

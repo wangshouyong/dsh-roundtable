@@ -7,7 +7,7 @@ import type { FactKind, Thread, TurnTrace } from '../../core/types.ts'
 import { stripLegacyReasoning } from '../../core/text.ts'
 import { activityLabel } from '../../core/floor.ts'
 import { Avatar } from '../Avatar.tsx'
-import { IconChevronRight, IconCrown, IconMore, IconSearch } from './icons.tsx'
+import { IconChevronRight, IconCrown, IconMore, IconPlus, IconSearch } from './icons.tsx'
 import { GroupFilesPane } from './group-files.tsx'
 import { ACTIVITIES, fmt, jumpToSourceMessage, memberChips } from './shared.tsx'
 
@@ -301,8 +301,9 @@ export function MemberPane(props: {
   refresh: () => void
   onShowProfile: (id: string) => void
   onShowActivity: (personaId: string) => void
+  onInvite: () => void
 }) {
-  const { im, thread, refresh, onShowProfile, onShowActivity } = props
+  const { im, thread, refresh, onShowProfile, onShowActivity, onInvite } = props
   const [mq, setMq] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [menuFor, setMenuFor] = useState<string | null>(null)
@@ -316,6 +317,15 @@ export function MemberPane(props: {
       <div className="member-head">
         <h3>群成员 <span className="head-count">{thread.memberIds.length + 1}</span></h3>
         <div className="head-icons">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="邀请成员"
+            title="邀请成员进群"
+            onClick={(e) => { e.stopPropagation(); onInvite() }}
+          >
+            <IconPlus size={14} />
+          </button>
           <button type="button" className="icon-btn" aria-label="搜索成员" onClick={(e) => { e.stopPropagation(); setShowSearch((v) => !v) }}>
             <IconSearch size={14} />
           </button>
@@ -423,6 +433,13 @@ export function MemberPane(props: {
           </div>
         )
       })}
+      <button
+        type="button"
+        className="text-link invite-link"
+        onClick={(event) => { event.stopPropagation(); onInvite() }}
+      >
+        ＋ 邀请成员
+      </button>
     </div>
   )
 }
@@ -497,13 +514,14 @@ export function GroupRightPane(props: {
   run: (fn: () => Promise<unknown> | unknown) => Promise<void>
   refresh: () => void
   onShowProfile: (id: string) => void
+  onInvite: () => void
   tab: GroupRightTab
   onTab: (tab: GroupRightTab) => void
   activityFilter: string | undefined
   onActivityFilter: (personaId: string | undefined) => void
   onOpenTrace: (trace: TurnTrace) => void
 }) {
-  const { im, thread, run, refresh, onShowProfile, tab, onTab, activityFilter, onActivityFilter, onOpenTrace } = props
+  const { im, thread, run, refresh, onShowProfile, onInvite, tab, onTab, activityFilter, onActivityFilter, onOpenTrace } = props
   return (
     <aside className="col-right">
       <div className="right-tabs">
@@ -522,6 +540,7 @@ export function GroupRightPane(props: {
               refresh={refresh}
               onShowProfile={onShowProfile}
               onShowActivity={(personaId) => { onActivityFilter(personaId); onTab('activity') }}
+              onInvite={onInvite}
             />
           )
           : tab === 'facts'
