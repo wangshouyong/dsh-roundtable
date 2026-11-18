@@ -90,7 +90,9 @@ describe('群工作区文件（只读浏览）', () => {
     await expect(listGroupFiles(root, '../evil')).rejects.toThrow(/threadId/)
   })
 
-  it('目录条目超过上限时截断并标记（不静默）', async () => {
+  // IO 密集：510 次写文件在 91 个并行 worker 下会抢满 Windows tmpdir IO，
+  // 默认 5s 会偶发超时（不是逻辑失败）。断言不变，只放宽该用例的超时。
+  it('目录条目超过上限时截断并标记（不静默）', { timeout: 20_000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'dshim-files-many-'))
     const dir = groupDir(root, 't_big')
     await mkdir(dir, { recursive: true })
