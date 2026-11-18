@@ -35,7 +35,10 @@ type DshCtx = {
       handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void
     }) => () => void
   }
+  /** 0.2.0-rc.2 的 dsh-web-app 提供；0.2.1 起移除。 */
   webRuntime?: { trustedHosts?: string[] }
+  /** 0.2.1 起 dsh-web-app 的 web-startup 行提供（替代 webRuntime）。 */
+  webStartup?: { trustedHosts?: string[] }
   logger?: { info?: (m: string) => void; warn?: (m: string) => void }
   llm?: LlmService
   /** DSH 附件存储（宿主可能没挂载；没挂载时图片只存本地、模型看不到内容）。 */
@@ -553,12 +556,29 @@ export function apply(ctx: DshCtx, config?: DshImConfig): void {
       } catch {
         // 没有工作区注册表时用进程 cwd。
       }
-      try {
-        ctx.inject(['webServer', 'webRuntime'], (wctx) => {
-          disposeWeb = mountImRoutes(wctx, host, native, tooling)
-        })
-      } catch (error) {
-        ctx.logger?.warn?.(`[dsh-im] web UI not mounted: ${error instanceof Error ? error.message : String(error)}`)
+      // Web 路由挂载：各版本的就绪信号不同——0.2.0-rc.2 的 dsh-web-app 提供
+      // `webRuntime`；0.2.1 起移除，改由 `webStartup`（host/port/trustedHosts）。
+      // 不能把 `webRuntime` 写进唯一的 inject：cordis 对缺失服务只会一直等待，
+      // 回调永不触发，整块面板会 404（rc.3 上就是这样）。
+      // 按“新→旧→仅 webServer”三级降级；mounted 守卫保证只挂一次。
+      let webMounted = false
+      const mountWeb = (wctx: DshCtx): void => {
+        if (webMounted) return
+        webMounted = true
+        disposeWeb = mountImRoutes(wctx, host, native, tooling)
+      }
+      for (const deps of [
+        ['webServer', 'webStartup'],
+        ['webServer', 'webRuntime'],
+        ['webServer'],
+      ] as const) {
+        try {
+          ctx.inject([...deps], mountWeb)
+        } catch (error) {
+          ctx.logger?.warn?.(
+            `[dsh-im] web UI not mounted (${deps.join('+')}): ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
       }
     }
     return () => {

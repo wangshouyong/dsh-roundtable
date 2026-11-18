@@ -5,6 +5,9 @@
 
 `版本 0.3.0` · `Node ≥ 20` · `MIT` · **可用版本（0.x：接口与数据格式可能小幅调整）**
 
+**兼容的 DSH 版本**：`0.2.0-rc.2` 与 `0.2.2-rc.3` 双版本实机验证——两版各用官方 CLI 起独立 web profile 挂载本插件，`/api/im/*` 宿主路由均返回 200，`client-modules` 均成功组装本插件客户端模块。
+两个版本的 Web 就绪服务不同——rc.2 提供 `webRuntime`，rc.3 已移除并改用 `webStartup`，插件用「`webStartup` → `webRuntime` → 仅 `webServer`」三级降级适配，不绑定任一版本私有服务。
+
 > 名称说明：仓库与品牌名为 **dsh-roundtable**；npm 包名是带 scope 的 `@dabuliu_wsy/dsh-im`，**插件 id 与数据目录仍是 `dsh-im`**（`.dsh-im/`、`DSH_IM_*` 环境变量），以兼容现有数据和已装配置。
 
 ## 这是什么

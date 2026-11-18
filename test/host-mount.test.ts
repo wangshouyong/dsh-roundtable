@@ -47,28 +47,52 @@ function fakeTools() {
   }
 }
 
-function setupCtx(options: { agents?: boolean; forceOff?: boolean; root?: string }) {
+/**
+ * 宿主能力集合：模拟不同 DSH 版本提供哪些服务。
+ * 0.2.0-rc.2：dsh-web-app 提供 webRuntime；
+ * 0.2.2-rc.3：webRuntime 已移除，改由 webStartup 提供（见 docs/upgrade-guide）。
+ */
+const HOST_SERVICES_RC2 = [
+  'llm', 'agents', 'workspaceRegistry', 'attachments', 'tools',
+  'webServer', 'webRuntime', 'sessions',
+] as const
+const HOST_SERVICES_RC3 = [
+  'llm', 'agents', 'workspaceRegistry', 'attachments', 'tools',
+  'webServer', 'webStartup', 'sessions',
+] as const
+
+function setupCtx(options: {
+  agents?: boolean
+  forceOff?: boolean
+  root?: string
+  services?: readonly string[]
+}) {
   const routes: MountedRoute[] = []
   let dispose: (() => void) | undefined
   let archiveCalls = 0
+  const available = new Set<string>(options.services ?? HOST_SERVICES_RC2)
+  const subs: Record<string, unknown> = {
+    workspaceRegistry: {
+      archiveSession: async () => { archiveCalls += 1 },
+      list: () => (options.root ? [{ path: options.root }] : []),
+    },
+    webServer: {
+      register(row: MountedRoute) {
+        routes.push(row)
+        return () => undefined
+      },
+    },
+    webRuntime: {},
+    webStartup: {},
+    sessions: {},
+  }
   const ctx = {
     effect(fn: () => (() => void) | void) {
       dispose = fn() as (() => void) | undefined
     },
-    inject(_deps: string[], fn: (sub: Record<string, unknown>) => void) {
-      fn({
-        workspaceRegistry: {
-          archiveSession: async () => { archiveCalls += 1 },
-          list: () => (options.root ? [{ path: options.root }] : []),
-        },
-        webServer: {
-          register(row: MountedRoute) {
-            routes.push(row)
-            return () => undefined
-          },
-        },
-        webRuntime: {},
-      })
+    inject(deps: string[], fn: (sub: Record<string, unknown>) => void) {
+      // 与 cordis 语义一致：任一依赖缺失时回调不激活（而不是报错）。
+      if (deps.every((dep) => available.has(dep))) fn(subs)
     },
     get(name: string) {
       if (name === 'llm') return fakeLlm()
@@ -187,6 +211,32 @@ describe('host 挂载（/api/im 路由 + 原生 session 开关）', () => {
     const missing = fakeResponse()
     await route.handler({ url: '/api/im/nope', method: 'GET', headers: { host: 'localhost' } }, missing)
     expect(missing.read().status).toBe(404)
+  })
+
+  // —— 双版本兼容回归：/api/im 的挂载不能绑死在某个版本私有的就绪服务上 ——
+
+  it('DSH 0.2.0-rc.2 宿主（有 webRuntime）只挂载一次，不因多级降级重复注册', async () => {
+    const { routes } = setupCtx({ services: HOST_SERVICES_RC2 })
+    expect(routes.map((route) => route.path)).toEqual(['/api/im'])
+    const status = await get(routes, '/api/im/native-status')
+    expect(status.status).toBe(200)
+  })
+
+  it('DSH 0.2.2-rc.3 宿主（webRuntime 已移除、改有 webStartup）仍能挂上 /api/im', async () => {
+    const { routes } = setupCtx({ services: HOST_SERVICES_RC3 })
+    expect(routes.map((route) => route.path)).toEqual(['/api/im'])
+    const status = await get(routes, '/api/im/native-status')
+    expect(status.status).toBe(200)
+  })
+
+  it('只提供 webServer 的宿主（既无 webRuntime 也无 webStartup）也能挂载', async () => {
+    const { routes } = setupCtx({ services: ['workspaceRegistry', 'webServer', 'sessions'] })
+    expect(routes.map((route) => route.path)).toEqual(['/api/im'])
+  })
+
+  it('没有 webServer 的宿主（headless）不挂载路由且不抛错', async () => {
+    const { routes } = setupCtx({ services: ['workspaceRegistry', 'sessions'] })
+    expect(routes).toEqual([])
   })
 
   it('/api/im/roots 是可用的只读数据根体检（当前根必在列表里）', async () => {
