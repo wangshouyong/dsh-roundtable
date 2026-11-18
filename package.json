@@ -1,6 +1,6 @@
 {
   "name": "@dabuliu_wsy/dsh-im",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DSH 专家团队 IM：多角色群聊/私聊，发言走宿主 ctx.llm 或原生 session",
   "type": "module",
   "main": "./dist/host/index.js",
