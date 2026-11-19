@@ -1,4 +1,6 @@
 # 专家团队 IM：侧栏「专家团队」+ Host /api/im
+# name 必须写包名（本仓发布名带 scope）：装到 profile/node_modules/@dabuliu_wsy/dsh-im，
+# 写 'dsh-im' 会让 loader 从 profile 根解析不到包 → 插件行 import 失败（ERR_MODULE_NOT_FOUND）。
 - insert:
     - id: dsh-im
-      name: 'dsh-im'
+      name: '@dabuliu_wsy/dsh-im'
