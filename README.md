@@ -110,7 +110,7 @@ dsh plugin --profile desktop add @dabuliu_wsy/dsh-im
 ```
 
 npm 包名是 `@dabuliu_wsy/dsh-im`（scope 必填），插件 id 与数据目录仍是 `dsh-im`。
-版本 **0.3.1** 已发布（[npm 页面](https://www.npmjs.com/package/@dabuliu_wsy/dsh-im)）；
+版本 **0.3.2** 已发布（[npm 页面](https://www.npmjs.com/package/@dabuliu_wsy/dsh-im)）；
 每次发布前会跑 `npm run gate` + `npm run verify:pack`（产物齐全、无开发材料、manifest 与版本一致）。
 
 ## 配置
@@ -177,7 +177,7 @@ scripts/      构建与校验脚本
 
 ## 项目状态与已知限制（如实）
 
-- **当前版本 `v0.3.1`**（tag + [Release 附件](https://github.com/wangshouyong/dsh-roundtable/releases)）：核心功能完成，`npm run gate`（typecheck → 单测 → build → 打包内容校验）与 GitHub Actions 全绿。
+- **当前版本 `v0.3.2`**（tag + [Release 附件](https://github.com/wangshouyong/dsh-roundtable/releases)）：核心功能完成，`npm run gate`（typecheck → 单测 → build → 打包内容校验）与 GitHub Actions 全绿。
 - **0.3.2 修复 scoped 安装**：npm 包名带 scope（`@dabuliu_wsy/dsh-im`），但 bundle patch 的 `name` 与客户端模块 id 之前写死成 `dsh-im`，导致 `dsh plugin add @dabuliu_wsy/dsh-im` 装出来的插件行 import 失败、客户端模块不注册（宿主 `/api/im` 不挂载）。现在两者都从包名生成。
 - **0.x 语义**：接口、数据格式与 UI 仍可能小幅调整；破坏性变更会写进 Release 说明，不静默改契约。
 - **原生 session 是默认路径，但仍是需要门禁守着的链路**：依赖宿主提供 `ctx.agents` + `tools.register` / `tools.guard`；缺能力时整体回退 `ctx.llm`。它不是"稳定 API"，宿主升级后可能要跟着改。
